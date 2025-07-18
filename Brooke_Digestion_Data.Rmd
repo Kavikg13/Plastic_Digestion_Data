@@ -1,0 +1,238 @@
+---
+title: "Brooke_Digestion_Data"
+author: "Kai Godhwani"
+date: "2025-06-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+#Raw Data
+```{r cars}
+df <- All_Brooke_2025_digestion_data_Rstudio
+names(df)
+#remove last column (notes column)
+df<-df[,-32]
+
+library(ggplot2)
+library(dplyr)
+library(car)
+```
+
+#PE
+```{r}
+#Removed 47 filter diameter
+df.PE <- subset(df, Polymer == "PE" & df$`Filter Diameter (mm)` == "25", 
+                select = c("Mass Change (%)", "Digestion Chemistry"))
+#mass change = num/con var
+df.PE$`Mass Change (%)`<- as.numeric(df.PE$`Mass Change (%)`)
+#Digestion chem = categ var
+df.PE$`Digestion Chemistry`<- as.factor(df.PE$`Digestion Chemistry`)
+
+
+library(ggplot2)
+
+PE.boxplot <- ggplot(df.PE, aes(x = df.PE$`Digestion Chemistry`, y = df.PE$`Mass Change (%)`, fill = df.PE$`Digestion Chemistry`)) +
+      geom_boxplot() + 
+        labs( 
+          x = "Digestion Chemistry",
+          y = "Mass Change (%)", 
+          title = "PE Mass Change by Digestsion Method") + 
+      theme_minimal() +
+      theme(legend.position = "none")
+
+PE.boxplot
+#Looks like PE gained mass in the Base Persulfate treatment and PE mass remained the same in the MQ control 
+#To compare the means of the two groups we should complete a t-test (parametric) 
+  #T-test assumptions: 
+
+#9 obs persulfate - OK
+#15 obs MQ - OK
+
+#Independent and random observations - Yes
+#Continuous explanatory variable (x) - Yes 
+
+#Normality 
+ggplot(df.PE, aes(x = `Mass Change (%)`)) +
+  geom_histogram() +
+  facet_wrap(~`Digestion Chemistry`, ncol = 1)
+  #right skew :(
+
+ShW.Basic <- subset(df.PE, `Digestion Chemistry` == "Base Persulfate")
+shapiro.test(ShW.Basic$`Mass Change (%)`)
+ #pval less than 0.05 -> significant deviation from normal distribution :(
+
+ShW.Control <- subset(df.PE, `Digestion Chemistry` == "MQ")
+shapiro.test(ShW.Control$`Mass Change (%)`)
+ #pval less than 0.05 -> significant deviation from normal distribution :(
+
+#Homoscedasticity
+
+#Since data is not normally distributed: cannot do bartlett must use levene 
+leveneTest(`Mass Change (%)` ~ `Digestion Chemistry`, data = df.PE)
+  #Pval more than 0.05 - no evidence of unequal variance :)
+
+#Must run non-parametric test since data is not normally distributed 
+
+wilcox.test(`Mass Change (%)` ~ `Digestion Chemistry`, data = df.PE)
+```
+#PET
+```{r}
+#Removed 47 filter diameter
+df.PET <- subset(df, Polymer == "PET" & df$`Filter Diameter (mm)` == "25", 
+                select = c("Mass Change (%)", "Digestion Chemistry", "Nominal size (µm)"))
+#mass change = num/con
+df.PET$`Mass Change (%)`<- as.numeric(df.PET$`Mass Change (%)`)
+#Digestion chem = categ
+df.PET$`Digestion Chemistry`<- as.factor(df.PET$`Digestion Chemistry`)
+df.PET$`Nominal size (µm)`<- as.factor(df.PET$`Nominal size (µm)`)
+library(ggplot2)
+
+
+#Plot with MQ 250-600
+ggplot(df.PET, aes(x = `Digestion Chemistry`, y = `Mass Change (%)`, fill = `Nominal size (µm)`)) +
+  geom_boxplot() +
+  labs(
+    x = "Digestion Chemistry",
+    y = "Mass Change (%)",
+    title = "Mass Change by Digestion Chemistry and Nominal Size"
+, fill = "Nominal size (µm)") +
+  theme_minimal()
+
+
+#Plot without MQ 250-600
+
+df.PET.2 <- df.PET[-c(1:10), ] %>% 
+  mutate(
+    `Nominal size (µm)` = factor(
+      `Nominal size (µm)`,
+      levels = c("32-63", "125-250", "600-710")   
+    )
+  )
+df.PET.2$`Nominal size (µm)` <- factor(df.PET.2$`Nominal size (µm)`,
+                                       levels = c("32-63", "125-250", "250-600", "600-710"))
+
+ggplot(df.PET.2,
+       aes(x = `Digestion Chemistry`,
+           y = `Mass Change (%)`,
+           fill = `Nominal size (µm)`)) +
+  geom_boxplot(position = position_dodge(width = .8)) +
+  labs(
+    x = "Digestion Chemistry",
+    y = "Mass Change (%)",
+    title = "Mass Change by Digestion Chemistry and Nominal Size",
+    fill = "Nominal size (µm)"
+  ) +
+  theme_minimal()
+#Looks like PET lost mass in the Base Persulfate treatment and PE mass remained the same in the MQ control and Acidic treatment
+#To compare the effects of two categorical variables (digestive method and nominal size) on numerical response (mass change) 
+
+#Independent and random observations - Yes
+#Continuous explanatory variable (x) - Yes 
+
+
+#Normality 
+ggplot(df.PET, aes(x = `Mass Change (%)`)) +
+  geom_histogram() +
+  facet_wrap(~`Digestion Chemistry`, ncol = 1)
+  #right skew :(
+
+ShW.Basic <- subset(df.PET, `Digestion Chemistry` == "Base Persulfate")
+shapiro.test(ShW.Basic$`Mass Change (%)`)
+ #pval more than 0.05 -> no deviation from normal distribution :)
+
+ShW.Acidic <- subset(df.PET, `Digestion Chemistry` == "Acidic Persulfate")
+shapiro.test(ShW.Acidic$`Mass Change (%)`)
+ #pval more than 0.05 -> no deviation from normal distribution :)
+
+ShW.Control <- subset(df.PET, `Digestion Chemistry` == "MQ")
+shapiro.test(ShW.Control$`Mass Change (%)`)
+ #pval more than 0.05 -> no significant deviation from normal distribution :)
+
+#Homoscedasticity
+
+#Since data is not normally distributed: cannot do bartlett must use levene 
+leveneTest(`Mass Change (%)` ~ `Digestion Chemistry`, data = df.PET)
+  #Pval less than 0.05 -  unequal variance : ( 
+
+#Must run Welch two sample t test (unequal variance) 
+
+PET_Acidic <- subset(df.PET, `Digestion Chemistry` == "Acidic Persulfate", select = `Mass Change (%)`)
+PET_Basic <- subset(df.PET, `Digestion Chemistry` == "Base Persulfate", select = `Mass Change (%)`)
+
+
+anova <- aov(`Mass Change (%)` ~ `Digestion Chemistry`, data = df.PET)
+summary(anova)
+
+PET.twoanova <- aov(`Mass Change (%)` ~ `Digestion Chemistry`*`Nominal size (µm)`, data = df.PET)
+summary(PET.twoanova)
+```
+
+
+#N
+```{r}
+#Removed 47 filter diameter
+df.N <- subset(df, Polymer == "N" & df$`Filter Diameter (mm)` == "25", 
+                select = c("Mass Change (%)", "Digestion Chemistry"))
+#mass change = num/con
+df.N$`Mass Change (%)`<- as.numeric(df.N$`Mass Change (%)`)
+#Digestion chem = categ
+df.N$`Digestion Chemistry`<- as.factor(df.N$`Digestion Chemistry`)
+
+library(ggplot2)
+
+N.boxplot <- ggplot(df.N, aes(x = df.N$`Digestion Chemistry`, y = df.N$`Mass Change (%)`, fill = df.N$`Digestion Chemistry`)) +
+      geom_boxplot() + 
+        labs( 
+          x = "Digestion Chemistry",
+          y = "Mass Change (%)", 
+          title = "N Mass Change by Digestsion Method") + 
+      theme_minimal() +
+      theme(legend.position = "none")
+
+N.boxplot
+#Looks like N gained mass in the Base Persulfate treatment and PE mass remained the same in the MQ control 
+#To compare the means of the two groups we should complete a t-test (parametric) 
+  #T-test assumptions: 
+
+#9 obs persulfate - OK
+#15 obs MQ - OK
+
+#Independent and random observations - Yes
+#Continuous explanatory variable (x) - Yes 
+
+#Normality 
+ggplot(df.N, aes(x = `Mass Change (%)`)) +
+  geom_histogram() +
+  facet_wrap(~`Digestion Chemistry`, ncol = 1)
+  #right skew :(
+
+ShW.Basic.N <- subset(df.N, `Digestion Chemistry` == "Base Persulfate")
+shapiro.test(ShW.Basic.N$`Mass Change (%)`)
+ #pval less than 0.05 -> significant deviation from normal distribution :(
+
+ShW.Control.N <- subset(df.N, `Digestion Chemistry` == "MQ")
+shapiro.test(ShW.Control.N$`Mass Change (%)`)
+ #pval less than 0.05 -> significant deviation from normal distribution :(
+
+#Homoscedasticity
+
+#Since data is not normally distributed: cannot do bartlett must use levene 
+leveneTest(`Mass Change (%)` ~ `Digestion Chemistry`, data = df.N)
+  #Pval more than 0.05 - no evidence of unequal variance :)
+
+#Must run non-parametric test since data is not normally distributed 
+
+wilcox.test(`Mass Change (%)` ~ `Digestion Chemistry`, data = df.N)
+
+#test indicates significant difference in mass change between control and basic digestion
+```
+
