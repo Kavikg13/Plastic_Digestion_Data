@@ -1,0 +1,135 @@
+---
+title: "Jaime_Kai_Digestion_2025"
+author: "Kai Godhwani"
+date: "2025-07-24"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+library(readxl)
+df <- read_excel("Downloads/Jaime and Kai 2025 Digestion Data Rstudio.xlsx", 
+    sheet = "Data Summary")
+
+names(df)
+#remove last column (notes column)
+df<-df[,-c(31, 32)]
+
+library(ggplot2)
+library(dplyr)
+library(car)
+```
+
+```{r pet}
+#PET
+
+#Subset all PET data 
+df.PET <- subset(df, Polymer == "PET", 
+                select = c("Mass Change (%)", "Digestion Chemistry", "Nominal size (µm)", "Expt #"))
+
+#Ensure data is under the correct data types  
+  #mass change = num/con
+df.PET$`Mass Change (%)`<- as.numeric(df.PET$`Mass Change (%)`)
+  #Digestion chem and nominal size = categ
+df.PET$`Digestion Chemistry`<- as.factor(df.PET$`Digestion Chemistry`)
+df.PET$`Nominal size (µm)`<- as.factor(df.PET$`Nominal size (µm)`)
+library(ggplot2)
+
+#Ensure Boxplot order from left to right is increasing nominal size 
+df.PET$`Nominal size (µm)` <- factor(df.PET$`Nominal size (µm)`,
+                                     levels = c("32-63", "125-250", "600-710", "3000-5000"))
+
+#Boxplot All PET data with control 
+  #fill by nominal size 
+ggplot(df.PET,
+       aes(x = `Digestion Chemistry`,
+           y = `Mass Change (%)`,
+           fill = `Nominal size (µm)`)) +
+  geom_boxplot(position = position_dodge(width = .8)) +
+ ylim(-130,10) + 
+   labs(
+    x = "Digestion Chemistry",
+    y = "Mass Change (%)",
+    title = "Mass Change of PET by Digestion Chemistry and Nominal Size ALL DATA",
+    fill = "Nominal size (µm)"
+  ) +
+  theme_minimal()
+
+#All Data Without Control 
+df.PET.exp <- subset(df.PET, `Digestion Chemistry` == "Base Persulfate") 
+ 
+ggplot(df.PET.exp,
+       aes(x = `Digestion Chemistry`,
+           y = `Mass Change (%)`,
+           fill = `Nominal size (µm)`)) +
+  geom_boxplot(position = position_dodge(width = .8)) +
+ ylim(-130,10) + 
+   labs(
+    x = "Digestion Chemistry",
+    y = "Mass Change (%)",
+    title = "Mass Change of PET by Digestion Chemistry and Nominal Size ALL DATA",
+    fill = "Nominal size (µm)"
+  ) +
+  theme_minimal()
+
+```
+
+```{r}
+#Compare the effect of procedural changes (mixing of plastics into soliton and petridish covers)
+#Subset exp 2 and 3 and compare their results 
+df.exp2 <- subset(df.PET, df.PET$`Expt #` == "2")
+
+
+df.exp3 <- subset(df.PET, df.PET$`Expt #` == "3")
+
+#Ensure Boxplot order from left to right is increasing nominal size 
+df.exp2$`Nominal size (µm)` <- factor(df.exp2$`Nominal size (µm)`,
+                                     levels = c("32-63", "125-250", "600-710"))
+df.exp3$`Nominal size (µm)` <- factor(df.exp3$`Nominal size (µm)`,
+                                     levels = c("32-63", "125-250", "600-710"))
+
+#Boxplot PET data 
+  #fill by nominal size 
+exp2.plot <- ggplot(df.exp2,
+       aes(x = `Nominal size (µm)`,
+           y = `Mass Change (%)`)) +
+  geom_boxplot(position = position_dodge(width = .8)) +
+ ylim(-130,10) + 
+   labs(
+    x = "Digestion Chemistry",
+    y = "Mass Change (%)",
+    title = "Mass Change of PET by Digestion Chemistry and Nominal Size Exp 2",
+    fill = "Nominal size (µm)"
+  ) +
+  theme_minimal()
+
+exp3.plot <- ggplot(df.exp3,
+       aes(x = `Nominal size (µm)`,
+             y = `Mass Change (%)`)) +
+  geom_boxplot(position = position_dodge(width = .8)) +
+ ylim(-130,10) + 
+   labs(
+    x = "Digestion Chemistry",
+    y = "Mass Change (%)",
+    title = "Mass Change of PET by Digestion Chemistry and Nominal Size Exp 3",
+    fill = "Nominal size (µm)"
+  ) +
+  theme_minimal()
+
+
+library(patchwork)
+exp2.plot + exp3.plot
+#Procedural changes had a significant effect on reducing the variation of mass change 
+```
+
