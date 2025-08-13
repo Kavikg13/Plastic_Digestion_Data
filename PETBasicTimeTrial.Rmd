@@ -1,0 +1,331 @@
+---
+title: "PET_Time_Trial_Basic_Digestion"
+author: "Kai Godhwani"
+date: "2025-08-07"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(minpack.lm)
+library(broom)
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(ggplot2)
+library(readxl)
+
+#read time trail data 
+df <- read_excel("Downloads/2025 Time Series Basic Digestion Data.xlsx", 
+    sheet = "datawrangle_rstudio ")
+
+# Clean column names for easier coding
+df_clean <- df %>%
+  rename(
+    SizeRange = `Size Range (µm)`,
+    PercentRecovery = `Percent Recovery (%)`,
+    DigestionTime = `Digestion Time (min)`
+  ) %>%
+  mutate(SizeRange = as.factor(SizeRange))
+
+# Remove any zero recovery values for log transformation
+df_clean <- df_clean %>% filter(PercentRecovery > 0)
+
+# Add log transformed PercentRecovery for linear model - log in r is ln, i am linearlizing the data so i can use the lm function 
+df_clean$logRecovery <- log(df_clean$PercentRecovery)
+
+# Order size ranges from smallest to largest
+size_order <- c("32-63", "125-250", "600-710", "3000-5000")
+df_clean$SizeRange <- factor(df_clean$SizeRange, levels = size_order)
+
+# Function to fit forced intercept model
+fit_forced_intercept <- function(data) {
+  data$logRecovery_offset <- data$logRecovery - log(100)
+  lm(logRecovery_offset ~ DigestionTime - 1, data = data)
+}
+
+# Initialize accumulator dataframes
+all_predictions <- data.frame()
+all_stats <- data.frame()
+
+# Fit models for each size range
+for (size in size_order) {
+  # Get data for each size range
+  data <- df_clean %>% filter(SizeRange == size)
+  
+  if (nrow(data) == 0) next  # Skip if no data
+  
+  # Fit forced intercept model
+  forced_fit <- fit_forced_intercept(data)
+  
+  # Generate smooth prediction curve
+  time_seq <- seq(0, max(df_clean$DigestionTime), length.out = 100)
+  
+  # Predictions: y = 100 * exp(k * t) where k is the fitted slope - this is where i back transform the data so that we arent looking at the linearized data in teh graph - we can see the origonal data points and a first order decay curve 
+  k_value <- coef(forced_fit)[1]  # This is negative (decay)
+  predictions <- 100 * exp(k_value * time_seq)
+  
+  # Calculate R-squared manually
+  fitted_values <- 100 * exp(k_value * data$DigestionTime)
+  ss_res <- sum((data$PercentRecovery - fitted_values)^2)
+  ss_tot <- sum((data$PercentRecovery - mean(data$PercentRecovery))^2)
+  r_squared <- 1 - (ss_res / ss_tot)
+  
+  # Add predictions directly to accumulated dataframe
+  all_predictions <- rbind(all_predictions, 
+                          data.frame(
+                            SizeRange = size,
+                            DigestionTime = time_seq,
+                            predicted = predictions
+                          ))
+  
+  # Add statistics directly to accumulated dataframe
+  all_stats <- rbind(all_stats,
+                     data.frame(
+                       SizeRange = size,
+                       k_value = k_value,
+                       k_positive = -k_value,  # Positive decay constant for display
+                       r_squared = r_squared,
+                       p_value = summary(forced_fit)$coefficients[1,4]
+                     ))
+}
+# Create equation labels
+equation_labels <- all_stats %>%
+  mutate(
+    SizeRange = factor(SizeRange, levels = size_order),
+    # Create clean equation text
+    equation = paste0("y = 100e^(-", sprintf("%.2e", k_positive), "t)"),
+    r_squared_text = paste0("R² = ", round(r_squared, 3)),
+    # Combine equation and R²
+    label = paste0(equation, "\n", r_squared_text),
+    # Position for annotation
+    x_pos = 0.70 * max(df_clean$DigestionTime),
+    y_pos = 60
+  )
+
+# Create final plot - forced intercept model only
+p_final <- ggplot() +
+  # Original data points
+  geom_point(data = df_clean, aes(x = DigestionTime, y = PercentRecovery), 
+             size = 4, alpha = 0.8, color = "black") +
+  # Forced intercept fit predictions
+  geom_line(data = all_predictions, aes(x = DigestionTime, y = predicted), 
+            color = "blue", size = 1.3) +
+  # Add equation and R² annotations
+  geom_text(data = equation_labels, 
+            aes(x = x_pos, y = y_pos, label = label),
+            size = 6, fontface = "bold", color = "darkblue",
+            hjust = 1, vjust = 1) +
+  facet_wrap(~SizeRange, ncol = 2) +
+  scale_y_continuous(limits = c(0, 100), breaks = seq(0, 100, 20)) +
+  labs(title = "PET Microplastic Digestion: First-Order Decay Kinetics",
+       subtitle = "Exponential decay curves constrained to pass through (0,100)",
+       x = "Digestion Time (minutes)",
+       y = "Percent Recovery (%)") +
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 18, face = "bold"),
+    plot.title = element_text(size = 22, face = "bold"),
+    plot.subtitle = element_text(size = 18),
+    axis.title.x = element_text(size = 18, face = "bold"),
+    axis.title.y = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(size = 16),
+    axis.text.y = element_text(size = 16),
+    panel.grid.minor = element_blank()
+  )
+
+print(p_final)
+
+# Print model statistics
+print(all_stats)
+
+decay_rate_table <- all_stats %>%
+  arrange(desc(k_positive)) %>%  # Order from fastest to slowest decay
+  mutate(
+    `Particle Size Range (µm)` = SizeRange,
+    `Decay Rate Constant (min⁻¹)` = sprintf("%.2e", k_positive),
+    `Decay Rate Numeric` = round(k_positive, 6),
+    `R-squared` = round(r_squared, 3),
+    `P-value` = sprintf("%.2e", p_value)
+  ) %>%
+  select(`Particle Size Range (µm)`, `Decay Rate Constant (min⁻¹)`, 
+         `Decay Rate Numeric`, `R-squared`, `P-value`)
+
+print(decay_rate_table)
+
+# Create plot showing inverse relationship between particle size and decay rate
+size_decay_data <- all_stats %>%
+  mutate(
+    # Convert size ranges to numeric midpoints for plotting
+    size_midpoint = case_when(
+      SizeRange == "32-63" ~ 47.5,
+      SizeRange == "125-250" ~ 187.5,
+      SizeRange == "600-710" ~ 655,
+      SizeRange == "3000-5000" ~ 4000
+    )
+  )
+
+p_relationship <- ggplot(size_decay_data, aes(x = size_midpoint, y = k_positive)) +
+  geom_point(size = 5, color = "darkblue", alpha = 0.8) +
+  geom_line(color = "darkblue", size = 1.5, alpha = 0.7) +
+  # Add text labels for each point
+  geom_text(aes(label = SizeRange), vjust = -0.8, hjust = 0.5, 
+            size = 4, fontface = "bold", color = "darkblue") +
+  labs(title = "Inverse Relationship: Particle Size vs Decay Rate",
+       subtitle = "Decay rate decreases dramatically as particle size increases",
+       x = "Particle Size Midpoint (µm)",
+       y = "Decay Rate Constant (min⁻¹)") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 18, face = "bold"),
+    plot.subtitle = element_text(size = 14),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    axis.title.y = element_text(size = 14, face = "bold"),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    panel.grid.minor = element_blank()
+  )
+
+#We do see an inverse relationshi between size and decay rate but hese decay rates were calcualted based on a mass predictor not a size predictor so we must switch to a different model that calculates decay rate based on a size predictor since we are hypothesizing that surface area is the driving characteristic in the digestion kinetics 
+```
+
+```{r}
+# Order size ranges from smallest to largest
+size_order <- c("32-63", "125-250", "600-710", "3000-5000")
+df$`Size Range (µm)` <- factor(df$`Size Range (µm)`, levels = size_order)
+
+
+#annotations for graph to show r^2
+annotation_df <- df %>%
+  filter(`Digestion Time (min)` != 0) %>%
+  group_by(`Size Range (µm)`) %>%
+  nest() %>%
+  mutate(
+    model = map(data, ~ lm(k1t ~ 0 + `Digestion Time (min)`, data = .x)),
+    stats = map(model, glance),
+    coef = map(model, tidy)
+  ) %>%
+  unnest(stats, names_sep = "_") %>%
+  unnest(coef, names_sep = "_") %>%
+  transmute(
+    `Size Range (µm)`,
+    r2 = round(stats_r.squared, 3),
+    slope = signif(coef_estimate, 3),
+    label = paste0("k1 = ", slope, "\nR² = ", r2)  # Removed p-value line
+  )
+
+#Plot Shrinking sphere model for each size range 
+ggplot(df %>% filter(`Digestion Time (min)` != 0), 
+       aes(x = `Digestion Time (min)`, y = k1t, color = `Size Range (µm)`)) +
+  geom_point(size = 2.5) +
+  geom_line(aes(group = `Size Range (µm)`)) +
+  geom_smooth(
+    method = "lm", formula = y ~ 0 + x, se = FALSE,  # Removed confidence intervals
+    aes(group = `Size Range (µm)`),
+    color = "black",
+    size = 1
+  ) +
+  geom_text(
+    data = annotation_df,
+    aes(x = Inf, y = -Inf, label = label),
+    hjust = 1.1, vjust = -1,
+    inherit.aes = FALSE,
+    size = 6.5  # Increased from 3.5 to 5.5
+  ) +
+  facet_wrap(~ `Size Range (µm)`, scales = "free") +
+  theme_minimal() +
+  labs(
+    title = "Shrinking Sphere Model: k1t vs Time with Regression Lines",
+    x = "Digestion Time (min)",
+    y = "k1t",
+    color = "Size Range (µm)"
+  ) +
+  theme(
+    strip.text = element_text(size = 20, face = "bold"),  # Panel titles bigger
+    plot.title = element_text(size = 22, face = "bold"),  # Main title bigger
+    axis.title.x = element_text(size = 18, face = "bold"),  # X-axis label bigger
+    axis.title.y = element_text(size = 18, face = "bold"),  # Y-axis label bigger
+    axis.text.x = element_text(size = 16),  # X-axis numbers bigger
+    axis.text.y = element_text(size = 16),  # Y-axis numbers bigger
+    legend.position = "none"  # Remove legend completely
+  )
+
+#Linear relationships in all size ranges!! - we can now use the k1 values to look at size dependency 
+```
+```{r}
+
+
+k1_size_data <- annotation_df %>%
+  mutate(
+    # Convert size ranges to numeric midpoints
+    nominal_size = case_when(
+      `Size Range (µm)` == "32-63" ~ (32 + 63) / 2,      # 47.5 µm
+      `Size Range (µm)` == "125-250" ~ (125 + 250) / 2,  # 187.5 µm
+      `Size Range (µm)` == "600-710" ~ (600 + 710) / 2,  # 655 µm
+      `Size Range (µm)` == "3000-5000" ~ (3000 + 5000) / 2  # 4000 µm
+    ),
+    k1_value = slope  # k1 values from your shrinking sphere analysis
+  ) %>%
+  select(`Size Range (µm)`, nominal_size, k1_value, r2)
+
+
+
+# Fit inverse relationship: k1 = a/size + b
+# This is equivalent to: k1 = a * size^(-1) + b
+inverse_fit <- lm(k1_value ~ I(1/nominal_size), data = k1_size_data)
+inverse_summary <- summary(inverse_fit)
+
+
+# Generate smooth predictions for plotting
+size_seq <- seq(min(k1_size_data$nominal_size), max(k1_size_data$nominal_size), length.out = 100)
+inverse_predictions <- predict(inverse_fit, newdata = data.frame(nominal_size = size_seq))
+
+# Create prediction dataframe
+pred_df <- data.frame(
+  nominal_size = size_seq,
+  predicted_k1 = inverse_predictions
+)
+
+# Create plot showing inverse relationship
+p_inverse <- ggplot() +
+  # Original k1 data points
+  geom_point(data = k1_size_data, aes(x = nominal_size, y = k1_value), 
+             size = 5, color = "darkred", alpha = 0.8) +
+  # Inverse model fit line
+  geom_line(data = pred_df, aes(x = nominal_size, y = predicted_k1), 
+            color = "darkred", size = 1.5) +
+  # Add size range labels to points
+  geom_text(data = k1_size_data, aes(x = nominal_size, y = k1_value, 
+                                     label = `Size Range (µm)`),
+            vjust = -0.8, hjust = 0.5, size = 4, fontface = "bold", color = "darkred") +
+  # Add R² annotation for inverse fit
+  annotate("text", x = max(k1_size_data$nominal_size) * 0.7, 
+           y = max(k1_size_data$k1_value) * 0.9,
+           label = paste0("Inverse Model\nR² = ", round(inverse_summary$r.squared, 3)),
+           size = 5, fontface = "bold", color = "darkred", hjust = 1) +
+  labs(title = "Shrinking Sphere Model: Inverse Size-Dependency of k1",
+       subtitle = "Rate constant decreases with increasing particle size following inverse relationship",
+       x = "Average Particle Diameter (µm)",
+       y = "k1 Rate Constant") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 22, face = "bold"),
+    plot.subtitle = element_text(size = 18),
+    axis.title.x = element_text(size = 18, face = "bold"),
+    axis.title.y = element_text(size = 18, face = "bold"),
+    axis.text.x = element_text(size = 18),
+    axis.text.y = element_text(size = 18),
+    panel.grid.minor = element_blank()
+  )
+
+print(p_inverse)
+
+#Strong Inverse Fit!!!
+```
+
+
+
